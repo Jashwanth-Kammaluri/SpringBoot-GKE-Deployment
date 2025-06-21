@@ -1,34 +1,48 @@
+resources:
+- repo: self
+  fetchDepth: 1
+
+variables:
+  BuildConfiguration: 'Release'
+  DockerRegistry: "lyrical-chassis-459113-c9/sample-project"
+  ImageName: "sample-project"
+
 trigger:
 - main
 
-pool:
-  name: Default
+stages:
+- stage: Testbuild
+  pool:
+    name: Default
+  jobs:
+  - job: Build
+    steps:
+    - checkout: self
+    - script: |
+        ./gradlew clean build -x test
+      displayName: 'Build Package'
+        
+    - task: Docker@2
+      displayName: 'Docker Login to GCP'
+      inputs:
+        containerRegistry: 'gcp-demo'
+        command: 'login'
 
-variables:
-  IMAGE_NAME: sample-project
-  PROJECT_ID: lyrical-chassis-459113-c9
-  GCR_REGION: asia-south1
-  CLUSTER_NAME: demo-gke
-  CLUSTER_REGION: asia-south1
-  GKE_NAMESPACE: jhapcore
-  DEPLOYMENT_NAME: sample-app
+    - task: Docker@2
+      displayName: 'Docker Build and Push'
+      inputs:
+        repository: '$(DockerRegistry)/$(ImageName)'
+        command: 'buildAndPush'
+        Dockerfile: './Dockerfile'
+        tags: 2.0.0
 
-steps:
-- checkout: self
 
-- task: Maven@3
-  inputs:
-    mavenPomFile: 'pom.xml'
-    goals: 'package'
-    options: '-DskipTests'
-  displayName: 'Build with Maven'
-
-- script: |
-    docker build -t $GCR_REGION-docker.pkg.dev/$PROJECT_ID/$IMAGE_NAME/$IMAGE_NAME:$(Build.BuildId) .
-    docker push $GCR_REGION-docker.pkg.dev/$PROJECT_ID/$IMAGE_NAME/$IMAGE_NAME:$(Build.BuildId)
-  displayName: 'Docker Build & Push to GCR'
-
-- script: |
-    gcloud container clusters get-credentials $CLUSTER_NAME --region $CLUSTER_REGION --project $PROJECT_ID
-    kubectl set image deployment/$DEPLOYMENT_NAME $DEPLOYMENT_NAME=$GCR_REGION-docker.pkg.dev/$PROJECT_ID/$IMAGE_NAME/$IMAGE_NAME:$(Build.BuildId) -n $GKE_NAMESPACE
-  displayName: 'Deploy to GKE'
+- stage: Deploy
+  pool: 
+    name: Default
+  jobs: 
+  - job: Restart_Pod
+    steps: 
+    - script: |
+        kubectl rollout restart deployment sample-app -n jhapcore
+      displayName: "Restart Kubernets Deployment"
